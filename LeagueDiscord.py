@@ -7,14 +7,7 @@ import io
 import numpy as np
 from tensorflow.keras.utils import to_categorical
 import tensorflow.keras.models
-
-description = '''An example bot to showcase the discord.ext.commands extension
-module.
-There are a number of utility commands being showcased here.'''
-
-numStats = ["baronKills", "damageDealtToBuildings", "largestKillingSpree", "objectivesStolen", "pentaKills", "quadraKills", "tripleKills", "doubleKills", "timeCCingOthers", "totalDamageDealt", "totalHeal", "totalMinionsKilled", "visionScore", "totalHealsOnTeammates"]
-boolStats = ["firstBloodKill", "firstTowerKill"]
-challenges = ["abilityUses","acesBefore15Minutes","baronTakedowns","damagePerMinute","dodgeSkillShotsSmallWindow","flawlessAces","getTakedownsInAllLanesEarlyJungleAsLaner","goldPerMinute","maxCsAdvantageOnLaneOpponent","multiKillOneSpell","multiTurretRiftHeraldCount","multikills","saveAllyFromDeath","skillshotsDodged","skillshotsHit","soloBaronKills","soloKills","survivedSingleDigitHpCount","survivedThreeImmobilizesInFight","takedownsBeforeJungleMinionSpawn","teamDamagePercentage","visionScorePerMinute"]
+import requests
 
 intents = discord.Intents.default()
 intents.members = True
@@ -22,6 +15,38 @@ intents.message_content = True
 token = ''
 lol_watcher = LolWatcher('')
 api_count = 0
+image_url = 'http://ddragon.leagueoflegends.com/cdn/img/champion/splash/'
+currentImage = 'currentImage.jpg'
+
+description = '''
+Here are a list of commands League-Analyse currently supports. 
+'''
+
+numStats = ["baronKills", "damageDealtToBuildings", "largestKillingSpree", "objectivesStolen", "pentaKills", "quadraKills", "tripleKills", "doubleKills", "timeCCingOthers", "totalDamageDealt", "totalHeal", "totalMinionsKilled", "visionScore", "totalHealsOnTeammates"]
+boolStats = ["firstBloodKill", "firstTowerKill"]
+challenges = ["abilityUses","acesBefore15Minutes","baronTakedowns","damagePerMinute","dodgeSkillShotsSmallWindow","flawlessAces","getTakedownsInAllLanesEarlyJungleAsLaner","goldPerMinute","maxCsAdvantageOnLaneOpponent","multiKillOneSpell","multiTurretRiftHeraldCount","multikills","saveAllyFromDeath","skillshotsDodged","skillshotsHit","soloBaronKills","soloKills","survivedSingleDigitHpCount","survivedThreeImmobilizesInFight","takedownsBeforeJungleMinionSpawn","teamDamagePercentage","visionScorePerMinute"]
+regionDict = {
+    "euw" : "EUW1", 
+    "eun" : "EUN1", 
+    "br" : "BR1",
+    "jp" : "JP1",
+    "kr" : "KR",
+    "na" : "NA1",
+    "ru" : "RU",
+    "oce" : "OC1",
+    "tr" :  "TR1", 
+    "lan" : "LA1",
+    "las" : "LA2", 
+    "ph": "PH2",
+    "sg" : "SG2",
+    "th" : "TH2", 
+    "tw" : "TW2", 
+    "vn" : "VN2"
+}
+dDDict = {
+    "eun1" : "eune",
+    "oc1" : "oce"
+}
 
 #Calculated the win percentage of a given player
 #Fix to either select by queue or find ranked 5x5 or just take all ranked 5s games. 
@@ -37,9 +62,11 @@ async def formatInfo(info):
     returnInfo = ''
     for x in info:
         returnInfo += x + " "
+    
     return returnInfo.strip()
 
-
+async def findRegion(region):
+    return regionDict[region.lower()]
     
             
 
@@ -74,7 +101,7 @@ async def calculateChance(name:str, region:str):
             team = player['teamId']
     data = [] 
     data.append(match_details)
-    model = tensorflow.keras.models.load_model('E:/Projects/LeagueDiscord/test_model')
+    model = tensorflow.keras.models.load_model('C:/GITHUB/Projects/LeagueDiscord/test_model')
     predict_data = to_categorical(np.array(data), num_classes=896)
     print("predict_data")
     percentage = model.predict(predict_data)
@@ -129,8 +156,6 @@ async def makeImage(name:str, region:str):
     kills = 0
     deaths= 0
     assists=0
-    width = 400
-    height = 300
     currentHeight = 30
     information = []
     match = lol_watcher.match.matchlist_by_puuid(region, id, count=1, queue=420, type='ranked')[0]
@@ -150,12 +175,14 @@ async def makeImage(name:str, region:str):
                 for data in challenges:
                     if player['challenges'][data] > 0:
                         information.append(data+' '+ str(player['challenges'][data]))
-
-
-                #We have info about the player now, create stuff for the image
-    #create image here and return back to command. 
-
-    img = Image.new(mode = "RGB", size = (width, height),  color = (255, 255, 255) )
+    try: 
+        with open('currentImage.jpg', 'wb') as f:
+            f.write(requests.get(image_url + champion + '_0.jpg').content)
+        currentImage = 'currentImage.jpg'
+    except Exception:
+        currentImage = 'defaultImage.jpg'
+        return
+    img = Image.open(currentImage)
     textFill = ImageDraw.Draw(img)
     textFill.text((10, 10), name, fill=(255,0,0,255))
     textFill.text((10,20), champion, fill=(255,0,0,255))
@@ -181,8 +208,15 @@ async def highlight(ctx, *info: str):
     try:
         splitInfo = (await formatInfo(info)).split(",")
         name, region  = splitInfo
-    except Exception:
-        await ctx.send('Comma between name and region')
+    except ApiError as err:
+        if err.response.status_code == 429:
+            print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+            print('this retry-after is handled by default by the RiotWatcher library')
+            print('future requests wait until the retry-after time passes')
+        elif err.response.status_code == 404:
+            ctx.send('Summoner with that ridiculous name not found.')
+        else:
+            raise
         return
     image = await makeImage(name, region )
     with io.BytesIO() as image_binary:
@@ -197,8 +231,16 @@ async def ban(ctx, *info: str):
         splitInfo = (await formatInfo(info)).split(",")
         print(splitInfo)
         name, region, champion = splitInfo
-    except Exception:
-        await ctx.send('Comma between name and region')
+        region = (await findRegion(region))
+    except ApiError as err:
+        if err.response.status_code == 429:
+            print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+            print('this retry-after is handled by default by the RiotWatcher library')
+            print('future requests wait until the retry-after time passes')
+        elif err.response.status_code == 404:
+            ctx.send('Summoner with that ridiculous name not found.')
+        else:
+            raise
         return
     response = await banCalc(name, region, champion)
     print(api_count)
@@ -210,23 +252,52 @@ async def winrate(ctx, *info: str):
     try:
         splitInfo = (await formatInfo(info)).split(",")
         name, region = splitInfo
-    except Exception:
-        await ctx.send('Comma between name and region')
+        region = (await findRegion(region))
+    except ApiError as err:
+        if err.response.status_code == 429:
+            print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+            print('this retry-after is handled by default by the RiotWatcher library')
+            print('future requests wait until the retry-after time passes')
+        elif err.response.status_code == 404:
+            ctx.send('Summoner with that ridiculous name not found.')
+        else:
+            raise
         return
     wr = (await winrateCalc(name, region))
     await ctx.send(wr)
 
 @bot.command()
 async def chance(ctx, *info: str):
-    splitInfo = (await formatInfo(info)).split(",")
-    name, region = splitInfo
-    percentage = await calculateChance(name, region)
+    try:
+        splitInfo = (await formatInfo(info)).split(",")
+        name, region = splitInfo
+        region = (await findRegion(region))
+        percentage = await calculateChance(name, region)
+    except ApiError as err:
+        if err.response.status_code == 429:
+            print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+            print('this retry-after is handled by default by the RiotWatcher library')
+            print('future requests wait until the retry-after time passes')
+        elif err.response.status_code == 404:
+            ctx.send('Summoner with that ridiculous name not found.')
+        else:
+            raise
+        return
+
     print(percentage)
-    await ctx.send(percentage)
+    await ctx.send("You have a " + str(percentage) + " chance of winning based on your team composition.")
 
 @bot.command()
 async def joined(ctx, member: discord.Member):
     """Says when a member joined."""
     await ctx.send(f'{member.name} joined {discord.utils.format_dt(member.joined_at)}')
 
+
+
+## eventually make this into subclass for inheriting help https://gist.github.com/InterStella0/b78488fb28cadf279dfd3164b9f0cf96
+@bot.command()
+async def info(ctx):
+    with open('Text.txt') as f:
+        lines = f.read()
+    await ctx.send(lines)
 bot.run(token)
